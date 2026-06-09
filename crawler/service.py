@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from crawler.classifier import classify_page_type, extract_topics
-from crawler.fetcher import fetch_url
+from crawler.fetcher import FetchResult, fetch_url
 from crawler.parser import parse_html
 from crawler.schema import CrawlRecord, Headings, StructuredData
 
 
 async def crawl(url: str, respect_robots: bool = True) -> CrawlRecord:
     fetch = await fetch_url(url, respect_robots=respect_robots)
+    return build_crawl_record(fetch)
+
+
+def build_crawl_record(fetch: FetchResult) -> CrawlRecord:
     parsed = parse_html(fetch.html) if fetch.html else {}
     headings = parsed.get("headings") or Headings()
     structured_data = parsed.get("structured_data") or StructuredData()
@@ -34,7 +38,7 @@ async def crawl(url: str, respect_robots: bool = True) -> CrawlRecord:
     ])
 
     return CrawlRecord(
-        url=url,
+        url=fetch.requested_url,
         final_url=fetch.final_url,
         http_status=fetch.status_code,
         fetched_at=fetch.fetched_at,
