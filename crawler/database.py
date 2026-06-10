@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -11,6 +12,7 @@ from crawler.schema import CrawlJobResponse, CrawlRecord, JobStatus
 
 
 DEFAULT_DB_PATH = "crawl_results.db"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -71,6 +73,7 @@ class CrawlJobStore:
         self._connection.commit()
 
     def create_job(self, job_id: str, url: str) -> None:
+        logger.info("job_created", extra={"job_id": job_id, "url": url})
         now = _now()
         self._connection.execute(
             """
@@ -82,6 +85,7 @@ class CrawlJobStore:
         self._connection.commit()
 
     def update_status(self, job_id: str, status: JobStatus, error: str | None = None) -> None:
+        logger.info("job_status_updated", extra={"job_id": job_id, "status": status, "error": error})
         self._connection.execute(
             """
             UPDATE crawl_jobs
@@ -93,6 +97,10 @@ class CrawlJobStore:
         self._connection.commit()
 
     def save_record(self, job_id: str, record: CrawlRecord) -> None:
+        logger.info(
+            "job_record_saved",
+            extra={"job_id": job_id, "status": "completed", "http_status": record.http_status},
+        )
         self._connection.execute(
             """
             UPDATE crawl_jobs
@@ -134,6 +142,7 @@ class CrawlJobStore:
             (topic, key, json.dumps(payload), "pending", _now()),
         )
         self._connection.commit()
+        logger.info("broker_message_published", extra={"topic": topic, "key": key, "message_id": cursor.lastrowid})
         return int(cursor.lastrowid)
 
     def poll(self, topic: str) -> BrokerMessage | None:
@@ -159,6 +168,10 @@ class CrawlJobStore:
             ("in_progress", _now(), row["message_id"]),
         )
         self._connection.commit()
+        logger.info(
+            "broker_message_claimed",
+            extra={"topic": row["topic"], "key": row["message_key"], "message_id": row["message_id"]},
+        )
         return BrokerMessage(
             message_id=row["message_id"],
             topic=row["topic"],
@@ -176,6 +189,7 @@ class CrawlJobStore:
             ("acked", _now(), message_id),
         )
         self._connection.commit()
+        logger.info("broker_message_acked", extra={"message_id": message_id})
 
 
 def _now() -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from uuid import uuid4
 
@@ -13,6 +14,7 @@ from crawler.service import build_crawl_record
 FETCH_TOPIC = "crawl.fetch"
 PARSE_TOPIC = "crawl.parse"
 POLL_INTERVAL_SECONDS = 0.1
+logger = logging.getLogger(__name__)
 
 
 class CrawlPipeline:
@@ -25,10 +27,12 @@ class CrawlPipeline:
     async def start(self) -> None:
         if self._tasks:
             return
+        logger.info("pipeline_starting")
         self._tasks.append(asyncio.create_task(self._fetch_worker(), name="fetch-worker"))
         self._tasks.append(asyncio.create_task(self._parse_worker(), name="parse-worker"))
 
     async def stop(self) -> None:
+        logger.info("pipeline_stopping")
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -44,6 +48,7 @@ class CrawlPipeline:
         return self.store.get_job(job_id)
 
     async def _fetch_worker(self) -> None:
+        logger.info("worker_started", extra={"worker": "fetch-worker", "topic": FETCH_TOPIC})
         while True:
             message = self.store.poll(FETCH_TOPIC)
             if message is None:
@@ -53,16 +58,19 @@ class CrawlPipeline:
             job_id = message.payload["job_id"]
             url = message.payload["url"]
             try:
+                logger.info("fetch_worker_processing", extra={"job_id": job_id, "url": url})
                 self.store.update_status(job_id, "fetching")
                 fetch_result = await fetch_url(url)
                 self.store.update_status(job_id, "fetched")
                 self.store.publish(PARSE_TOPIC, job_id, {"job_id": job_id, "fetch_result": _fetch_to_payload(fetch_result)})
                 self.store.ack(message.message_id)
             except Exception as exc:  # pragma: no cover - defensive worker guard
+                logger.exception("fetch_worker_failed", extra={"job_id": job_id})
                 self.store.update_status(job_id, "failed", f"fetch_worker_error:{exc.__class__.__name__}")
                 self.store.ack(message.message_id)
 
     async def _parse_worker(self) -> None:
+        logger.info("worker_started", extra={"worker": "parse-worker", "topic": PARSE_TOPIC})
         while True:
             message = self.store.poll(PARSE_TOPIC)
             if message is None:
@@ -71,11 +79,13 @@ class CrawlPipeline:
 
             job_id = message.payload["job_id"]
             try:
+                logger.info("parse_worker_processing", extra={"job_id": job_id})
                 self.store.update_status(job_id, "parsing")
                 record = build_crawl_record(_fetch_from_payload(message.payload["fetch_result"]))
                 self.store.save_record(job_id, record)
                 self.store.ack(message.message_id)
             except Exception as exc:  # pragma: no cover - defensive worker guard
+                logger.exception("parse_worker_failed", extra={"job_id": job_id})
                 self.store.update_status(job_id, "failed", f"parse_worker_error:{exc.__class__.__name__}")
                 self.store.ack(message.message_id)
 

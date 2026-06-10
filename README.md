@@ -108,6 +108,9 @@ Every page type returns the same schema. Product, article, news, category, homep
 ## Design Choices
 
 - `httpx` async fetcher with timeouts, retries, redirects, user-agent, and robots.txt checks.
+- Retry only for transient statuses: `408`, `409`, `425`, `429`, `500`, `502`, `503`, `504`.
+- Non-2xx responses are recorded but not parsed as content.
+- Structured JSON logging is configured at app startup and decorator-based logging wraps key API/fetch/parse operations.
 - SQLite-backed Kafka-like topics: `crawl.fetch` and `crawl.parse`.
 - One fetch worker and one parse worker to mirror separate production services without adding local infrastructure.
 - Single local SQLite database for the PoC, used as a zero-infrastructure stand-in for PostgreSQL.
@@ -138,6 +141,8 @@ curl "http://127.0.0.1:8000/crawl/<job_id-from-response>"
 
 Amazon and similar sites may return `403`, `429`, `503`, CAPTCHA, or very thin HTML to a normal server-side crawler. The service records the status and emits warnings such as `blocked_by_anti_bot` or `thin_content`.
 
+For non-2xx responses, the crawler stores the HTTP status and warnings but does not parse the response HTML. This prevents access-denied, CAPTCHA, or CDN challenge pages from being mistaken for the target page content.
+
 ## Docker
 
 ```bash
@@ -165,6 +170,7 @@ For a billion-URL system, this crawler should become the parse/classify worker b
 7. Store outputs in object storage, warehouse, and serving index separately.
 
 PoC tradeoffs and planned production improvements are in `docs/poc_to_production.md`.
+Planned SLO/SLA metrics and future observability tables are in `docs/slo_sla_metrics_plan.md`.
 
 
 ## AI Usage Declaration
