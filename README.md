@@ -2,7 +2,7 @@
 
 Working proof-of-concept crawler for the BrightEdge scale home assignment.
 
-The service exposes a small FastAPI API that fetches a URL, extracts SEO/content metadata, classifies page type, derives topics, validates a unified schema, and returns a JSON crawl record. The implementation is intentionally demo-friendly while the system design plan covers the billion-URL production architecture.
+The service exposes a small FastAPI API that accepts crawl jobs, publishes them to a Kafka-like local topic, fetches URLs through a single async fetch worker, publishes fetched HTML to a parse topic, parses/classifies through a single parse worker, persists the result in a single local database, and returns a unified JSON crawl record by job id. The implementation is intentionally demo-friendly while the system design plan covers the billion-URL production architecture.
 
 ## Quick Start
 
@@ -36,6 +36,8 @@ Returns service status.
 
 ### `POST /crawl`
 
+Queues a crawl job and returns immediately.
+
 Request:
 
 ```json
@@ -44,9 +46,23 @@ Request:
 }
 ```
 
+Response:
+
+```json
+{
+  "job_id": "9f8d...",
+  "status": "queued",
+  "result_url": "/crawl/9f8d..."
+}
+```
+
+### `GET /crawl/{job_id}`
+
+Returns the stored job status and the extracted record once parsing is complete.
+
 ### `GET /crawl?url=...`
 
-Equivalent to `POST /crawl`.
+Backward-compatible direct crawl endpoint. It fetches, parses, and returns the crawl record in one request. The production-like flow is `POST /crawl` followed by `GET /crawl/{job_id}`.
 
 ## Output Schema
 
@@ -92,6 +108,12 @@ Every page type returns the same schema. Product, article, news, category, homep
 ## Design Choices
 
 - `httpx` async fetcher with timeouts, retries, redirects, user-agent, and robots.txt checks.
+- Retry only for transient statuses: `408`, `409`, `425`, `429`, `500`, `502`, `503`, `504`.
+- Non-2xx responses are recorded but not parsed as content.
+- Structured JSON logging is configured at app startup and decorator-based logging wraps key API/fetch/parse operations.
+- SQLite-backed Kafka-like topics: `crawl.fetch` and `crawl.parse`.
+- One fetch worker and one parse worker to mirror separate production services without adding local infrastructure.
+- Single local SQLite database for the PoC, used as a zero-infrastructure stand-in for PostgreSQL.
 - `selectolax` parser when available for fast metadata extraction.
 - `trafilatura` when available for main-body extraction.
 - Pydantic v2 schema validation for consistent downstream records.
@@ -104,17 +126,22 @@ Every page type returns the same schema. Product, article, news, category, homep
 curl -X POST "http://127.0.0.1:8000/crawl" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://blog.rei.com/camp/how-to-introduce-your-indoorsy-friend-to-the-outdoors/"}'
+curl "http://127.0.0.1:8000/crawl/<job_id-from-response>"
 
 curl -X POST "http://127.0.0.1:8000/crawl" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://www.cnn.com/2025/01/01/tech/example"}'
+curl "http://127.0.0.1:8000/crawl/<job_id-from-response>"
 
 curl -X POST "http://127.0.0.1:8000/crawl" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://www.amazon.com/dp/B08N5WRWNW"}'
+curl "http://127.0.0.1:8000/crawl/<job_id-from-response>"
 ```
 
 Amazon and similar sites may return `403`, `429`, `503`, CAPTCHA, or very thin HTML to a normal server-side crawler. The service records the status and emits warnings such as `blocked_by_anti_bot` or `thin_content`.
+
+For non-2xx responses, the crawler stores the HTTP status and warnings but does not parse the response HTML. This prevents access-denied, CAPTCHA, or CDN challenge pages from being mistaken for the target page content.
 
 ## Docker
 
@@ -141,6 +168,9 @@ For a billion-URL system, this crawler should become the parse/classify worker b
 5. Raw HTML is compressed into object storage.
 6. Parse/classify workers emit validated records.
 7. Store outputs in object storage, warehouse, and serving index separately.
+
+PoC tradeoffs and planned production improvements are in `docs/poc_to_production.md`.
+Planned SLO/SLA metrics and future observability tables are in `docs/slo_sla_metrics_plan.md`.
 
 
 ## AI Usage Declaration

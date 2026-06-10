@@ -7,6 +7,7 @@ from pydantic import AnyHttpUrl, BaseModel, Field
 
 
 PageType = Literal["product", "article", "homepage", "category", "other"]
+JobStatus = Literal["queued", "fetching", "fetched", "parsing", "completed", "failed"]
 
 
 class Topic(BaseModel):
@@ -27,6 +28,22 @@ class StructuredData(BaseModel):
 
 class CrawlRequest(BaseModel):
     url: AnyHttpUrl
+
+
+class CrawlJobAccepted(BaseModel):
+    job_id: str
+    status: JobStatus
+    result_url: str
+
+
+class CrawlJobResponse(BaseModel):
+    job_id: str
+    url: str
+    status: JobStatus
+    record: "CrawlRecord | None" = None
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class CrawlRecord(BaseModel):
